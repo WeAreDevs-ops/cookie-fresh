@@ -1,108 +1,43 @@
-const axios = require('axios');
+const { generateAuthTicket, redeemAuthTicket } = require('../../refresh');
 
-async function fetchSessionCSRFToken(roblosecurityCookie) {
-    try {
-        await axios.post("https://auth.roblox.com/v2/logout", {}, {
-            headers: {
-                'Cookie': `.ROBLOSECURITY=${roblosecurityCookie}`,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            timeout: 10000
-        });
+module.exports = async (req, res) => {
+  const roblosecurityCookie = req.query.cookie;
 
-        return null;
-    } catch (error) {
-        if (error.code === 'ECONNABORTED') {
-            throw new Error('Request timeout while fetching CSRF token');
-        }
-        return error.response?.headers["x-csrf-token"] || null;
+  if (!roblosecurityCookie) {
+    return res.status(400).json({ error: "Cookie parameter is required" });
+  }
+
+  if (typeof roblosecurityCookie !== 'string' || roblosecurityCookie.trim().length === 0) {
+    return res.status(400).json({ error: "Invalid cookie format" });
+  }
+
+  if (!roblosecurityCookie.includes('_|WARNING:-DO-NOT-SHARE-THIS')) {
+    return res.status(400).json({ error: "Invalid Roblox cookie format" });
+  }
+
+  try {
+    const authTicket = await generateAuthTicket(roblosecurityCookie);
+
+    if (authTicket === "Failed to fetch auth ticket") {
+      return res.status(400).json({ error: "Invalid cookie or failed to generate auth ticket" });
     }
-}
 
-async function generateAuthTicket(roblosecurityCookie) {
-    try {
-        const csrfToken = await fetchSessionCSRFToken(roblosecurityCookie);
-        
-        if (!csrfToken) {
-            throw new Error('Failed to obtain CSRF token');
-        }
+    const redemptionResult = await redeemAuthTicket(authTicket);
 
-        const response = await axios.post("https://auth.roblox.com/v1/authentication-ticket", {}, {
-            headers: {
-                "x-csrf-token": csrfToken,
-                "referer": "https://www.roblox.com/",
-                'Content-Type': 'application/json',
-                'Cookie': `.ROBLOSECURITY=${roblosecurityCookie}`,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            timeout: 10000
-        });
-
-        const authTicket = response.headers['rbx-authentication-ticket'];
-        if (!authTicket) {
-            throw new Error('No authentication ticket received from Roblox');
-        }
-
-        return authTicket;
-    } catch (error) {
-        console.error('Error generating auth ticket:', error.message);
-        return "Failed to fetch auth ticket";
+    if (!redemptionResult.success) {
+      return res.status(400).json({ error: "Failed to refresh cookie", debug: redemptionResult });
     }
-}
 
-async function redeemAuthTicket(authTicket) {
-    try {
-        if (!authTicket || authTicket === "Failed to fetch auth ticket") {
-            throw new Error('Invalid authentication ticket provided');
-        }
+    const refreshedCookie = redemptionResult.refreshedCookie || '';
 
-        const response = await axios.post("https://auth.roblox.com/v1/authentication-ticket/redeem", {
-            "authenticationTicket": authTicket
-        }, {
-            headers: {
-                'RBXAuthenticationNegotiation': '1',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            timeout: 10000
-        });
+    return res.status(200).json({
+      success: true,
+      authTicket,
+      refreshedCookie
+    });
 
-        const refreshedCookieData = response.headers['set-cookie']?.toString() || "";
-        
-        if (!refreshedCookieData) {
-            throw new Error('No cookie data received from Roblox');
-        }
-
-        // Extract the full .ROBLOSECURITY cookie value
-        const cookieMatch = refreshedCookieData.match(/\.ROBLOSECURITY=([^;]+)/);
-        
-        if (!cookieMatch || cookieMatch.length < 2) {
-            console.error('Cookie extraction failed. Raw cookie data:', refreshedCookieData);
-            throw new Error('Failed to extract refreshed cookie from response');
-        }
-
-        const extractedCookie = cookieMatch[1];
-        
-        // Validate that we got a proper Roblox cookie
-        if (!extractedCookie.includes('_|WARNING:-DO-NOT-SHARE-THIS')) {
-            console.error('Invalid cookie format extracted:', extractedCookie);
-            throw new Error('Extracted cookie does not appear to be valid');
-        }
-
-        return {
-            success: true,
-            refreshedCookie: extractedCookie
-        };
-    } catch (error) {
-        console.error('Error redeeming auth ticket:', error.message);
-        return {
-            success: false,
-            robloxDebugResponse: error.response?.data,
-            error: error.message
-        };
-    }
-}
-
-module.exports = {
-    generateAuthTicket,
-    redeemAuthTicket
+  } catch (error) {
+    console.error('Error in /api/refresh.js:', error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 };
