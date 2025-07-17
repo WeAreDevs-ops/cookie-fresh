@@ -13,8 +13,19 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!cookie || cookie.trim().length === 0) {
             return "Please enter a cookie";
         }
-        if (!cookie.includes('_|WARNING:-DO-NOT-SHARE-THIS')) {
-            return "Invalid Roblox cookie format";
+        
+        // Normalize cookie - remove .ROBLOSECURITY= prefix if present
+        let normalizedCookie = cookie.trim();
+        if (normalizedCookie.startsWith('.ROBLOSECURITY=')) {
+            normalizedCookie = normalizedCookie.substring(15);
+        }
+        
+        // Check if it's a full cookie with warning or just the token part
+        let isFullCookie = normalizedCookie.includes('_|WARNING:-DO-NOT-SHARE-THIS');
+        let isTokenOnly = /^[A-Za-z0-9._-]+$/.test(normalizedCookie) && normalizedCookie.length > 100;
+        
+        if (!isFullCookie && !isTokenOnly) {
+            return "Invalid Roblox cookie format. Please provide either the full cookie or just the token part.";
         }
         return null;
     }
@@ -93,6 +104,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     }
                     
                     if (!response.ok) {
+                        if (response.status === 429) {
+                            throw new Error(data.error || "Rate limited: Cookie is likely already fresh or you're refreshing too frequently.");
+                        }
                         throw new Error(data.error || `HTTP error! status: ${response.status}`);
                     }
                     
@@ -185,3 +199,4 @@ document.addEventListener("DOMContentLoaded", function () {
         this.parentElement.style.transform = "scale(1)";
     });
 });
+                        
