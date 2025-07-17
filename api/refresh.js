@@ -13,7 +13,7 @@ module.exports = async (req, res) => {
     return res.status(200).end();
   }
 
-  const roblosecurityCookie = req.query.cookie;
+  let roblosecurityCookie = req.query.cookie;
 
   if (!roblosecurityCookie) {
     return res.status(400).json({ error: "Cookie parameter is required" });
@@ -23,8 +23,23 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: "Invalid cookie format" });
   }
 
-  if (!roblosecurityCookie.includes('_|WARNING:-DO-NOT-SHARE-THIS')) {
+  // Normalize cookie - remove .ROBLOSECURITY= prefix if present
+  roblosecurityCookie = roblosecurityCookie.trim();
+  if (roblosecurityCookie.startsWith('.ROBLOSECURITY=')) {
+    roblosecurityCookie = roblosecurityCookie.substring(15);
+  }
+
+  // Check if it's a full cookie with warning or just the token part
+  let isFullCookie = roblosecurityCookie.includes('_|WARNING:-DO-NOT-SHARE-THIS');
+  let isTokenOnly = /^[A-Za-z0-9._-]+$/.test(roblosecurityCookie) && roblosecurityCookie.length > 100;
+
+  if (!isFullCookie && !isTokenOnly) {
     return res.status(400).json({ error: "Invalid Roblox cookie format" });
+  }
+
+  // If it's token only, we need to add the warning prefix for internal processing
+  if (isTokenOnly) {
+    roblosecurityCookie = `_|WARNING:-DO-NOT-SHARE-THIS.--Sharing-this-will-allow-someone-to-log-in-as-you-and-to-steal-your-ROBUX-and-items.|_${roblosecurityCookie}`;
   }
 
   try {
@@ -37,11 +52,17 @@ module.exports = async (req, res) => {
     const redemptionResult = await redeemAuthTicket(authTicket);
 
     if (!redemptionResult.success) {
-      if (redemptionResult.robloxDebugResponse && redemptionResult.robloxDebugResponse.status === 401) {
-        return res.status(401).json({ error: "Unauthorized: The provided cookie is invalid." });
-      } else {
-        return res.status(400).json({ error: "Failed to refresh cookie. Please check if your cookie is valid." });
+      if (redemptionResult.robloxDebugResponse) {
+        const status = redemptionResult.robloxDebugResponse.status;
+        if (status === 401) {
+          return res.status(401).json({ error: "Unauthorized: The provided cookie is invalid." });
+        } else if (status === 429) {
+          return res.status(429).json({ 
+            error: "Rate limited: Your cookie is likely already fresh or you're refreshing too frequently. Please wait a few minutes before trying again." 
+          });
+        }
       }
+      return res.status(400).json({ error: "Failed to refresh cookie. Please check if your cookie is valid." });
     }
 
     const refreshedCookie = redemptionResult.refreshedCookie || '';
