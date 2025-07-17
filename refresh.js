@@ -96,7 +96,10 @@ async function redeemAuthTicket(authTicket) {
         console.error('Error redeeming auth ticket:', error.message);
         return {
             success: false,
-            robloxDebugResponse: error.response?.data,
+            robloxDebugResponse: {
+                status: error.response?.status,
+                data: error.response?.data
+            },
             error: error.message
         };
     }
